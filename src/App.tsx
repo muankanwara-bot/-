@@ -5,6 +5,7 @@ import {
 } from './db';
 import { Student, InternshipLog, Teacher, Establishment, UserRole } from './types';
 import LogForm from './components/LogForm';
+import { fetchGoogleSheet } from './utils/sheetFetcher';
 import ReportPanel from './components/ReportPanel';
 import AdminPanel from './components/AdminPanel';
 import TeacherPanel from './components/TeacherPanel';
@@ -71,24 +72,7 @@ export default function App() {
     setLoginErrorMessage(null);
 
     try {
-      // Use full-stack backend endpoint to fetch Google Sheets CSV export and bypass CORS restriction
-      const targetUrl = `/api/proxy-sheet?url=${encodeURIComponent(sheetUrl.trim())}`;
-      const response = await fetch(targetUrl);
-      if (!response.ok) {
-        let errMsg = `ไม่สามารถเข้าถึงลิงก์ได้ (Status: ${response.status})`;
-        try {
-          const errData = await response.json();
-          if (errData && errData.error) {
-            errMsg = errData.error;
-          }
-        } catch (_) {}
-        throw new Error(errMsg);
-      }
-
-      const text = await response.text();
-      if (!text || text.trim().startsWith('<!DOCTYPE html>')) {
-        throw new Error('ไม่สามารถเข้าถึงข้อมูลชีตได้ เนื่องจากลิงก์เป็นแบบส่วนบุคคลโปรดแก้ไขให้เป็นแบบสาธารณะ (Anyone with link can view)');
-      }
+      const text = await fetchGoogleSheet(sheetUrl);
 
       const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
       if (lines.length === 0) {

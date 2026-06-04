@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Student, Teacher, Establishment, InternshipLog } from '../types';
+import { fetchGoogleSheet } from '../utils/sheetFetcher';
 import { 
   getStudents, addStudent, updateStudent, deleteStudent,
   getTeachers, addTeacher, updateTeacher, deleteTeacher,
@@ -373,20 +374,7 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
     setIsSyncingTeachers(true);
     
     try {
-      const targetUrl = `/api/proxy-sheet?url=${encodeURIComponent(teacherSheetUrl.trim())}`;
-      const response = await fetch(targetUrl);
-      if (!response.ok) {
-        let errMsg = `ไม่สามารถเชื่อมต่อไฟล์ได้ (Status: ${response.status})`;
-        try {
-          const errData = await response.json();
-          if (errData && errData.error) {
-            errMsg = errData.error;
-          }
-        } catch (_) {}
-        throw new Error(errMsg);
-      }
-
-      const text = await response.text();
+      const text = await fetchGoogleSheet(teacherSheetUrl);
       const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
       if (lines.length === 0) {
         throw new Error('ไม่พบข้อมูลที่จะนำเข้าในชีตแผ่นที่ 2');
@@ -468,24 +456,7 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
     setIsSyncingStudents(true);
 
     try {
-      const targetUrl = `/api/proxy-sheet?url=${encodeURIComponent(studentSheetUrl.trim())}`;
-      const response = await fetch(targetUrl);
-      if (!response.ok) {
-        let errMsg = `ไม่สามารถเชื่อมต่อไฟล์ได้ (Status: ${response.status})`;
-        try {
-          const errData = await response.json();
-          if (errData && errData.error) {
-            errMsg = errData.error;
-          }
-        } catch (_) {}
-        throw new Error(errMsg);
-      }
-
-      const text = await response.text();
-      if (!text || text.trim().startsWith('<!DOCTYPE html>')) {
-        throw new Error('ไม่สามารถเข้าถึงข้อมูลชีตได้ เนื่องจากลิงก์เป็นแบบส่วนบุคคลโปรดแก้ไขให้เป็นแบบสาธารณะ (Anyone with link can view)');
-      }
-
+      const text = await fetchGoogleSheet(studentSheetUrl);
       const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
       if (lines.length === 0) {
         throw new Error('ไม่พบข้อมูลนักศึกษาในชีตแผ่นที่ 1');
@@ -623,20 +594,7 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
     setIsSyncingEstablishments(true);
 
     try {
-      const targetUrl = `/api/proxy-sheet?url=${encodeURIComponent(establishmentSheetUrl.trim())}`;
-      const response = await fetch(targetUrl);
-      if (!response.ok) {
-        let errMsg = `ไม่สามารถเชื่อมต่อไฟล์ได้ (Status: ${response.status})`;
-        try {
-          const errData = await response.json();
-          if (errData && errData.error) {
-            errMsg = errData.error;
-          }
-        } catch (_) {}
-        throw new Error(errMsg);
-      }
-
-      const text = await response.text();
+      const text = await fetchGoogleSheet(establishmentSheetUrl);
       const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
       if (lines.length === 0) {
         throw new Error('ไม่พบข้อมูลที่จะนำเข้าในชีตแผ่นที่ 3');
