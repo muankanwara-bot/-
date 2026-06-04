@@ -40,9 +40,13 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
   const [studentEst, setStudentEst] = useState('');
 
   // Bulk import states
-  const [studentAddMode, setStudentAddMode] = useState<'single' | 'bulk'>('single');
+  const [studentAddMode, setStudentAddMode] = useState<'single' | 'bulk' | 'sheet'>('single');
   const [bulkTextInput, setBulkTextInput] = useState('');
   const [bulkSeparator, setBulkSeparator] = useState<'auto' | 'tab' | 'comma' | 'semicolon'>('auto');
+
+  // Student Bulk Import / Google Sheets Sync states
+  const [studentSheetUrl, setStudentSheetUrl] = useState<string>('https://docs.google.com/spreadsheets/d/125RRThRChUJBB3I1prrtmbw7PuGnh4Hf4WhJWXpEeB0/edit?gid=0#gid=0');
+  const [isSyncingStudents, setIsSyncingStudents] = useState<boolean>(false);
 
   // Teacher Form states
   const [teacherForm, setTeacherForm] = useState<Teacher>({
@@ -459,6 +463,115 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
     }
   };
 
+  const handleSyncStudentsGoogleSheets = async () => {
+    if (!studentSheetUrl.trim()) return;
+    setIsSyncingStudents(true);
+
+    try {
+      const targetUrl = `/api/proxy-sheet?url=${encodeURIComponent(studentSheetUrl.trim())}`;
+      const response = await fetch(targetUrl);
+      if (!response.ok) {
+        let errMsg = `ไม่สามารถเชื่อมต่อไฟล์ได้ (Status: ${response.status})`;
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) {
+            errMsg = errData.error;
+          }
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
+
+      const text = await response.text();
+      if (!text || text.trim().startsWith('<!DOCTYPE html>')) {
+        throw new Error('ไม่สามารถเข้าถึงข้อมูลชีตได้ เนื่องจากลิงก์เป็นแบบส่วนบุคคลโปรดแก้ไขให้เป็นแบบสาธารณะ (Anyone with link can view)');
+      }
+
+      const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+      if (lines.length === 0) {
+        throw new Error('ไม่พบข้อมูลนักศึกษาในชีตแผ่นที่ 1');
+      }
+
+      const currentStudents = getStudents();
+      const updatedStudentsList = [...currentStudents];
+      let importCount = 0;
+      let duplicateCount = 0;
+
+      const parsedStudents: Student[] = [];
+
+      for (let line of lines) {
+        let parts: string[] = [];
+        const matches = line.match(/("([^"]*)"|[^,]+)/g);
+        if (matches) {
+          parts = matches.map(m => m.replace(/^"|"$/g, '').trim());
+        } else {
+          parts = line.split(',').map(p => p.trim());
+        }
+
+        if (parts.length >= 2) {
+          const student_id = parts[0].replace(/['"\s]/g, '');
+          const full_name = parts[1];
+
+          // Skip headers
+          if (
+            student_id.toLowerCase().includes('student_id') || 
+            student_id.toLowerCase().includes('studentid') || 
+            student_id.includes('รหัสนักศึกษา') || 
+            student_id.includes('รหัส') || 
+            full_name.includes('ชื่อ-นามสกุล') || 
+            full_name.includes('ชื่อสกุล') ||
+            full_name.includes('ชื่อ')
+          ) {
+            continue;
+          }
+
+          if (student_id && full_name) {
+            const department = parts[2] || "คณะเทคโนโลยีสารสนเทศ";
+            const major = parts[3] || "วิทยาการคอมพิวเตอร์";
+            const mentor_name = parts[4] || undefined;
+            const establishment_id = parts[5] || undefined;
+
+            parsedStudents.push({
+              student_id,
+              full_name,
+              department,
+              major,
+              mentor_name,
+              establishment_id
+            });
+          }
+        }
+      }
+
+      if (parsedStudents.length === 0) {
+        throw new Error('โครงสร้าง Google Sheet ไม่ถูกต้อง คอลัมน์ที่ 1 ต้องเป็นรหัสนักศึกษา และคอลัมน์ที่ 2 เป็นชื่อ-นามสกุล');
+      }
+
+      for (const parsed of parsedStudents) {
+        const idx = updatedStudentsList.findIndex(s => s.student_id === parsed.student_id);
+        if (idx !== -1) {
+          updatedStudentsList[idx] = {
+            ...updatedStudentsList[idx],
+            ...parsed
+          };
+          duplicateCount++;
+        } else {
+          updatedStudentsList.push(parsed);
+          importCount++;
+        }
+      }
+
+      saveStudents(updatedStudentsList);
+      setStudents(getStudents());
+      onRefreshAllData();
+      showMsg(`✓ ซิงค์รายชื่อนักศึกษาสำเร็จจำนวน ${parsedStudents.length} ราย (เพิ่มใหม่ ${importCount} ราย, อัปเดต ${duplicateCount} ราย)`);
+      setStudentAddMode('single');
+    } catch (err: any) {
+      showMsg(err.message || 'เกิดข้อผิดพลาดในการโหลดข้อมูลจาก Google Sheets', 'error');
+    } finally {
+      setIsSyncingStudents(false);
+    }
+  };
+
   // Establishment Actions
   const handleAddEstablishment = (e: React.FormEvent) => {
     e.preventDefault();
@@ -755,6 +868,15 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
               >
                 📋 คัดลอกวางจาก Google Sheets / Excel ล็อตใหญ่
               </button>
+              <button
+                type="button"
+                onClick={() => { setStudentAddMode('sheet'); setEditingId(null); }}
+                className={`pb-3 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
+                  studentAddMode === 'sheet' ? 'border-emerald-500 text-emerald-800' : 'border-transparent text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                🔗 ซิงค์จาก Google Sheets (หน้าที่ 1)
+              </button>
             </div>
 
             {studentAddMode === 'single' ? (
@@ -873,7 +995,7 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
                   </button>
                 </div>
               </form>
-            ) : (
+            ) : studentAddMode === 'bulk' ? (
               <form onSubmit={handleBulkImport} className="bg-slate-50 border border-slate-100 rounded-xl p-5 space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <div>
@@ -979,6 +1101,34 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
                   </button>
                 </div>
               </form>
+            ) : (
+              <div className="bg-emerald-50/50 border border-emerald-100 p-5 rounded-xl space-y-3.5 shadow-xs">
+                <div className="flex items-center gap-2 text-xs font-black text-emerald-900">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 animate-pulse" />
+                  <span>ดึงข้อมูลรายชื่อนักศึกษาจาก Google Sheets (หน้าที่ 1) 🔗</span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-semibold leading-normal">
+                  ดึงข้อมูลรายชื่อนักศึกษาโดยใช้ลิงก์แผ่นที่ 1 ของไฟล์ Google Sheet (ซึ่งมีรายละเอียดรหัสนักศึกษา, ชื่อ-นามสกุล, แผนก/คณะ, สาขาวิชา, คณาจารย์ประสานงาน และสถานประกอบการ) กดปุ่ม <b>"ดึงข้อมูลนักศึกษา"</b> เพื่อซิงค์ทันที
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    placeholder="ป้อน URL ของ Google Sheet แผ่นที่ 1"
+                    value={studentSheetUrl}
+                    onChange={(e) => setStudentSheetUrl(e.target.value)}
+                    className="flex-1 bg-white border border-slate-200 text-xs font-semibold text-slate-700 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSyncStudentsGoogleSheets}
+                    disabled={isSyncingStudents}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-350 text-white font-extrabold text-[11px] px-5 py-2.5 rounded-xl transition-all cursor-pointer shrink-0 shadow-xs flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingStudents ? 'animate-spin' : ''}`} />
+                    {isSyncingStudents ? 'กำลังดึงข้อมูล...' : 'ดึงข้อมูลนักศึกษา'}
+                  </button>
+                </div>
+              </div>
             )}
 
             <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
