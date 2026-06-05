@@ -3,7 +3,13 @@ import { Student, InternshipLog, Teacher, Establishment } from './types';
 // Mock Initial Data
 const INITIAL_STUDENTS: Student[] = [];
 
-const INITIAL_TEACHERS: Teacher[] = [];
+const INITIAL_TEACHERS: Teacher[] = [
+  { teacher_id: 'E11', full_name: 'พี่ตาม', department: 'นักวิชาการคอมพิวเตอร์ชำนาญการ', password: '1110' },
+  { teacher_id: 'E12', full_name: 'พี่่หมู', department: 'นักวิชาการคอมพิวเตอร์ชำนาญการ', password: '1120' },
+  { teacher_id: 'E13', full_name: 'พี่สกาย', department: 'นักวิชาการคอมพิวเตอร์ชำนาญการ', password: '1130' },
+  { teacher_id: 'E14', full_name: 'พี่ต้า', department: 'นักวิชาการคอมพิวเตอร์ชำนาญการ', password: '1140' },
+  { teacher_id: 'E15', full_name: 'ปะหวา', department: 'นักวิชาการคอมพิวเตอร์ชำนาญการ', password: '1150' }
+];
 
 const INITIAL_ESTABLISHMENTS: Establishment[] = [];
 
@@ -30,9 +36,27 @@ export function initDB() {
   if (!localStorage.getItem('intern_students') || forceOverWrite) {
     localStorage.setItem('intern_students', JSON.stringify(INITIAL_STUDENTS));
   }
-  if (!localStorage.getItem('intern_teachers')) {
-    localStorage.setItem('intern_teachers', JSON.stringify(INITIAL_TEACHERS));
+  // Always synchronize the supervisor list to match INITIAL_TEACHERS exactly (and overwrite any others),
+  // but preserve any digital signatures signed for existing IDs
+  const rawTeachers = localStorage.getItem('intern_teachers');
+  const existingSignatures: { [id: string]: string } = {};
+  if (rawTeachers) {
+    try {
+      const parsed: Teacher[] = JSON.parse(rawTeachers);
+      parsed.forEach(t => {
+        if (t.signature) {
+          existingSignatures[t.teacher_id] = t.signature;
+        }
+      });
+    } catch (e) {}
   }
+
+  const updatedTeachers = INITIAL_TEACHERS.map(t => ({
+    ...t,
+    signature: existingSignatures[t.teacher_id] || t.signature || ''
+  }));
+  localStorage.setItem('intern_teachers', JSON.stringify(updatedTeachers));
+
   if (!localStorage.getItem('intern_establishments')) {
     localStorage.setItem('intern_establishments', JSON.stringify(INITIAL_ESTABLISHMENTS));
   }
@@ -67,21 +91,6 @@ export function initDB() {
       );
       if (filtered.length !== logs.length) {
         localStorage.setItem('intern_logs', JSON.stringify(filtered));
-      }
-    } catch (e) {}
-  }
-
-  // Force clean up of the deleted teacher IDs requested by the user
-  const rawTeachers = localStorage.getItem('intern_teachers');
-  if (rawTeachers) {
-    try {
-      const teachers: Teacher[] = JSON.parse(rawTeachers);
-      const filtered = teachers.filter(t => 
-        t.teacher_id !== "T001" && 
-        t.teacher_id !== "T002"
-      );
-      if (filtered.length !== teachers.length) {
-        localStorage.setItem('intern_teachers', JSON.stringify(filtered));
       }
     } catch (e) {}
   }

@@ -33,6 +33,8 @@ export interface Teacher {
   teacher_id: string;
   full_name: string;
   department: string;
+  signature?: string; // Optional teacher/supervisor saved signature
+  password?: string; // Teacher/supervisor custom password
 }
 
 export interface Establishment {

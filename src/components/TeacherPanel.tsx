@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Student, InternshipLog, Teacher } from '../types';
-import { getStudents, getLogs, updateLog, getTeachers } from '../db';
-import { CheckCircle, XCircle, AlertCircle, Eye, RefreshCw, Star, Clock, User, MessageSquare } from 'lucide-react';
+import { getStudents, getLogs, updateLog, getTeachers, updateTeacher } from '../db';
+import SignaturePad from './SignaturePad';
+import { CheckCircle, XCircle, AlertCircle, Eye, RefreshCw, Star, Clock, User, MessageSquare, PenTool } from 'lucide-react';
 
 interface TeacherPanelProps {
   logs: InternshipLog[];
@@ -12,6 +13,33 @@ interface TeacherPanelProps {
 export default function TeacherPanel({ logs, onLogStatusUpdated, currentTeacherName = "อาจารย์นิเทศ" }: TeacherPanelProps) {
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   
+  // Teachers and signature states
+  const [teachers, setTeachers] = useState<Teacher[]>(() => getTeachers());
+  
+  const matchedTeacher = useMemo(() => {
+    return teachers.find(t => t.full_name === currentTeacherName);
+  }, [teachers, currentTeacherName]);
+
+  const handleSaveSelfSignature = (sig: string) => {
+    if (!matchedTeacher) {
+      // In case we don't have this teacher in DB yet, create one
+      const newTeacher: Teacher = {
+        teacher_id: `T_AUTO_${Date.now().toString().slice(-4)}`,
+        full_name: currentTeacherName,
+        department: "คณะเทคโนโลยีสารสนเทศ",
+        signature: sig
+      };
+      updateTeacher(newTeacher);
+    } else {
+      const updated: Teacher = {
+        ...matchedTeacher,
+        signature: sig
+      };
+      updateTeacher(updated);
+    }
+    setTeachers(getTeachers());
+  };
+
   // Review feedback state
   const [feedbackText, setFeedbackText] = useState<Record<number, string>>({});
   const [message, setMessage] = useState<string | null>(null);
@@ -52,17 +80,24 @@ export default function TeacherPanel({ logs, onLogStatusUpdated, currentTeacherN
 
   const handleApprove = (log: InternshipLog) => {
     const feedback = feedbackText[log.log_id] || '';
+    const sigAmt = matchedTeacher?.signature || '';
+    
     const updated: InternshipLog = {
       ...log,
       status: 'approved',
       approved_by: currentTeacherName,
+      supervisor_signature: sigAmt || log.supervisor_signature || '',
       feedback: feedback.trim() || undefined
     };
 
     const res = updateLog(updated);
     if (res.success) {
-      setMessage(`✅ อนุมัติการเข้าฝึกงานวันที่ ${new Date(log.work_date).toLocaleDateString('th-TH')} สำเร็จ`);
-      setTimeout(() => setMessage(null), 4000);
+      if (!sigAmt) {
+        setMessage(`✅ อนุมัติการเข้าฝึกงานวันที่ ${new Date(log.work_date).toLocaleDateString('th-TH')} สำเร็จ (แต่ขาดลายมือชื่อผู้ควบคุม คุณสามารถบันทึกลายมือชื่อที่หัวกระดาษหน้าต่างนี้ได้)`);
+      } else {
+        setMessage(`✅ อนุมัติการเข้าฝึกงานสำเร็จและลงลายลักษณ์ชื่อรับรองชั่วโมงปฏิบัติงานเรียบร้อย`);
+      }
+      setTimeout(() => setMessage(null), 5000);
       onLogStatusUpdated();
     }
   };
@@ -190,6 +225,49 @@ export default function TeacherPanel({ logs, onLogStatusUpdated, currentTeacherN
                 <div className="bg-amber-50 border border-amber-150 rounded-xl p-3 text-xs text-amber-800 font-semibold flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                   คุณมี {studentStats.pendingCount} บันทึกรายวัน รอนุมัติชั่วโมงฝึกงานอยู่
+                </div>
+              )}
+            </div>
+
+            {/* อาจารย์ผู้ประเมิน ลายเซ็นส่วนตัว */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              <h5 className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5 uppercase tracking-wider">
+                <PenTool className="w-4 h-4 text-emerald-600" />
+                ลายมือชื่อของคุณ (My Signature)
+              </h5>
+              
+              <p className="text-[11px] text-slate-500 font-normal leading-relaxed">
+                ลายมือชื่อนี้จะถูกประทับลงบนเอกสารใบงานของนักศึกษาโดยอัตโนมัติเมื่อท่านคลิกปุ่ม "อนุมัติและรับรองชั่วโมง"
+              </p>
+
+              {matchedTeacher?.signature ? (
+                <div className="space-y-3">
+                  <div className="bg-slate-50/50 border border-slate-150 p-2 rounded-xl flex items-center justify-center">
+                    <img 
+                      src={matchedTeacher.signature} 
+                      alt="My signature" 
+                      className="h-16 max-w-full object-contain bg-white border border-slate-250 p-1 rounded shadow-xs" 
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleSaveSelfSignature('')}
+                    className="w-full text-center text-xs text-rose-600 hover:text-rose-800 font-bold border border-rose-150 hover:border-rose-250 py-2 rounded-xl transition-colors cursor-pointer"
+                  >
+                    ลบลายมือชื่อนี้เพื่อเขียนใหม่
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="border border-dashed border-slate-300 rounded-xl p-2 bg-slate-50/50">
+                    <SignaturePad 
+                      onSave={handleSaveSelfSignature}
+                      initialSignature=""
+                    />
+                  </div>
+                  <div className="text-[10px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 p-2.5 rounded-xl leading-normal">
+                    ⚠️ โปรดลงลายมือชื่อด้านบนนี้ หรืออัปโหลดไฟล์รูปภาพ เพื่อนำไปเซ็นอนุมัติให้กับใบงานของนักศึกษา
+                  </div>
                 </div>
               )}
             </div>

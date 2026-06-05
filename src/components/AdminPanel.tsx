@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Student, Teacher, Establishment, InternshipLog } from '../types';
 import { fetchGoogleSheet } from '../utils/sheetFetcher';
+import SignaturePad from './SignaturePad';
 import { 
   getStudents, addStudent, updateStudent, deleteStudent,
   getTeachers, addTeacher, updateTeacher, deleteTeacher,
@@ -53,7 +54,9 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
   const [teacherForm, setTeacherForm] = useState<Teacher>({
     teacher_id: '',
     full_name: '',
-    department: ''
+    department: '',
+    signature: '',
+    password: ''
   });
 
   // Teacher Bulk Import / Google Sheets Sync states
@@ -333,10 +336,10 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
 
     const isAdded = addTeacher(teacherForm);
     if (!isAdded) {
-      showMsg("รหัสอาจารย์นี้มีอยู่ในระบบแล้ว", "error");
+      showMsg("ชื่อผู้ใช้นี้มีอยู่ในระบบแล้ว", "error");
     } else {
       showMsg(`เพิ่มอาจารย์ ${teacherForm.full_name} สำเร็จแล้ว`);
-      setTeacherForm({ teacher_id: '', full_name: '', department: '' });
+      setTeacherForm({ teacher_id: '', full_name: '', department: '', signature: '', password: '' });
       setTeachers(getTeachers());
       onRefreshAllData();
     }
@@ -344,7 +347,11 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
 
   const handleEditTeacher = (t: Teacher) => {
     setEditingId(t.teacher_id);
-    setTeacherForm(t);
+    setTeacherForm({
+      ...t,
+      signature: t.signature || '',
+      password: t.password || ''
+    });
   };
 
   const handleSaveTeacherEdit = (id: string) => {
@@ -354,7 +361,7 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
     };
     updateTeacher(updated);
     setEditingId(null);
-    setTeacherForm({ teacher_id: '', full_name: '', department: '' });
+    setTeacherForm({ teacher_id: '', full_name: '', department: '', signature: '', password: '' });
     setTeachers(getTeachers());
     onRefreshAllData();
     showMsg("แก้ไขข้อมูลอาจารย์สำเร็จ");
@@ -397,8 +404,8 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
         }
 
         if (parts.length >= 2) {
-          const teacher_id = parts[0].replace(/['"\s]/g, '');
-          const full_name = parts[1];
+          const teacher_id = parts[0].trim();
+          const full_name = parts[1].trim();
 
           // Skip headers
           if (
@@ -406,43 +413,49 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
             teacher_id.toLowerCase().includes('teacherid') || 
             teacher_id.includes('รหัสอาจารย์') || 
             teacher_id.includes('รหัส') || 
-            full_name.includes('ชื่อ-นามสกุล') || 
-            full_name.includes('ชื่อสกุล') ||
-            full_name.includes('ชื่อ')
+            teacher_id.includes('ชื่อผู้ใช้') || 
+            teacher_id.toLowerCase().includes('username') ||
+            teacher_id.toUpperCase() === 'ID'
           ) {
             continue;
           }
 
           if (teacher_id && full_name) {
-            const department = parts[2] || "คณะเทคโนโลยีสารสนเทศ";
+            const department = parts[2] ? parts[2].trim() : "นักวิชาการคอมพิวเตอร์ชำนาญการ";
+            const password = parts[3] ? parts[3].trim() : "1234";
+
             parsedTeachers.push({
               teacher_id,
               full_name,
-              department
+              department,
+              password
             });
           }
         }
       }
 
       if (parsedTeachers.length === 0) {
-        throw new Error('โครงสร้าง Google Sheet ไม่ถูกต้อง คอลัมน์ที่ 1 ต้องเป็นรหัสอาจารย์ และคอลัมน์ที่ 2 เป็นชื่อ-นามสกุล');
+        throw new Error('ไม่พบข้อมูลรายชื่ออาจารย์นิเทศที่ถูกต้องในโครงสร้างชีตแผ่นที่ 2');
       }
 
-      for (const parsed of parsedTeachers) {
-        const idx = updatedTeachersList.findIndex(t => t.teacher_id === parsed.teacher_id);
-        if (idx !== -1) {
-          updatedTeachersList[idx] = parsed;
-          duplicateCount++;
-        } else {
-          updatedTeachersList.push(parsed);
-          importCount++;
+      // Replace the entire list with the newly parsed teachers as requested (overwriting previous ones)
+      // but preserve signatures for matching IDs if they already signed
+      const existingSignatures: { [id: string]: string } = {};
+      currentTeachers.forEach(t => {
+        if (t.signature) {
+          existingSignatures[t.teacher_id] = t.signature;
         }
-      }
+      });
 
-      saveTeachers(updatedTeachersList);
+      const finalTeachersList = parsedTeachers.map(t => ({
+        ...t,
+        signature: existingSignatures[t.teacher_id] || t.signature || ''
+      }));
+
+      saveTeachers(finalTeachersList);
       setTeachers(getTeachers());
       onRefreshAllData();
-      showMsg(`✓ ซิงค์รายชื่ออาจารย์นิเทศสำเร็จจำนวน ${parsedTeachers.length} ท่าน (เพิ่มใหม่ ${importCount} ท่าน, อัปเดต ${duplicateCount} ท่าน)`);
+      showMsg(`✓ แทนที่และซิงค์รายชื่ออาจารย์นิเทศด้วยข้อมูลจากชีตหน้าที่ 2 สำเร็จจำนวน ${finalTeachersList.length} ท่าน`);
       setTeacherAddMode('single');
     } catch (err: any) {
       showMsg(err.message || 'เกิดข้อผิดพลาดในการโหลดข้อมูลจาก Google Sheets', 'error');
@@ -1167,15 +1180,15 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">รหัสอาจารย์</label>
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">ชื่อผู้ใช้ (Username)</label>
                     <input
                       type="text"
                       required
-                      placeholder="เช่น T003"
+                      placeholder="เช่น T003 หรือ Username"
                       value={teacherForm.teacher_id}
                       disabled={editingId !== null}
                       onChange={(e) => setTeacherForm({ ...teacherForm, teacher_id: e.target.value })}
-                      className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white disabled:bg-slate-100"
+                      className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white disabled:bg-slate-100 font-bold text-slate-800"
                     />
                   </div>
                   <div>
@@ -1186,7 +1199,7 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
                       placeholder="เช่น อ. สมฤดี พลวิไล"
                       value={teacherForm.full_name}
                       onChange={(e) => setTeacherForm({ ...teacherForm, full_name: e.target.value })}
-                      className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white"
+                      className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white font-semibold text-slate-800"
                     />
                   </div>
                   <div>
@@ -1197,9 +1210,23 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
                       placeholder="เช่น เทคโนโลยีสารสนเทศ"
                       value={teacherForm.department}
                       onChange={(e) => setTeacherForm({ ...teacherForm, department: e.target.value })}
-                      className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white"
+                      className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white text-slate-750"
                     />
                   </div>
+                </div>
+
+                {/* ลายเซ็นอาจารย์นิเทศ / ผู้ควบคุม */}
+                <div className="bg-white border border-slate-200/80 rounded-xl p-4">
+                  <span className="block text-[11px] font-bold text-slate-700 mb-1">
+                    🖋️ บันทึกลายมือชื่ออาจารย์นิเทศ (Supervisor Signature)
+                  </span>
+                  <div className="text-[10px] text-slate-400 mb-2">
+                    เซ็นหรืออัปโหลดลายลักษณ์ชื่อเพื่อใช้ในการอนุมัติใบงานของนักศึกษาโดยอัตโนมัติ
+                  </div>
+                  <SignaturePad 
+                    onSave={(sig) => setTeacherForm(prev => ({ ...prev, signature: sig }))}
+                    initialSignature={teacherForm.signature || ''}
+                  />
                 </div>
 
                 <div className="flex justify-end gap-2">
@@ -1208,7 +1235,7 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
                       type="button"
                       onClick={() => {
                         setEditingId(null);
-                        setTeacherForm({ teacher_id: '', full_name: '', department: '' });
+                        setTeacherForm({ teacher_id: '', full_name: '', department: '', signature: '' });
                       }}
                       className="bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 px-4 rounded-xl font-medium text-xs transition-colors cursor-pointer"
                     >
@@ -1264,9 +1291,10 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
               <table className="w-full text-xs text-left">
                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase text-[10px]">
                   <tr>
-                    <th className="px-5 py-3">รหัสอาจารย์</th>
+                    <th className="px-5 py-3">ชื่อผู้ใช้ (Username)</th>
                     <th className="px-5 py-3">ชื่อ-นามสกุล</th>
                     <th className="px-5 py-3">ภาควิชาสังกัด</th>
+                    <th className="px-5 py-3 text-center">ลายมือชื่อ</th>
                     <th className="px-5 py-3 text-center">จัดการ</th>
                   </tr>
                 </thead>
@@ -1276,6 +1304,18 @@ export default function AdminPanel({ onRefreshAllData }: AdminPanelProps) {
                       <td className="px-5 py-3.5 font-bold text-slate-700">{t.teacher_id}</td>
                       <td className="px-5 py-3.5 font-semibold text-slate-800">{t.full_name}</td>
                       <td className="px-5 py-3.5 text-slate-500 font-medium">{t.department}</td>
+                      <td className="px-5 py-3.5 text-center">
+                        {t.signature ? (
+                          <img 
+                            src={t.signature} 
+                            alt="Signature" 
+                            className="h-8 max-w-[100px] object-contain mx-auto bg-white border border-slate-150 p-0.5 rounded shadow-2xs" 
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <span className="text-rose-500 font-normal text-[10px]">ยังไม่ได้เซ็น</span>
+                        )}
+                      </td>
                       <td className="px-5 py-3.5 text-center">
                         <div className="flex gap-1 justify-center">
                           <button

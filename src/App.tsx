@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   initDB, getStudents, getLogs, getTeachers, getEstablishments, 
-  calculateHours, saveStudents 
+  calculateHours, saveStudents, saveTeachers 
 } from './db';
 import { Student, InternshipLog, Teacher, Establishment, UserRole } from './types';
 import LogForm from './components/LogForm';
@@ -25,12 +25,16 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
 
   // Signin form state
+  const [loginTab, setLoginTab] = useState<'student' | 'teacher'>('student');
   const [loginStudentId, setLoginStudentId] = useState<string>('');
+  const [loginTeacherId, setLoginTeacherId] = useState<string>('');
+  const [loginTeacherPassword, setLoginTeacherPassword] = useState<string>('');
   const [loginErrorMessage, setLoginErrorMessage] = useState<string | null>(null);
 
   // Google Sheets integration state
   const [sheetUrl, setSheetUrl] = useState<string>('https://docs.google.com/spreadsheets/d/125RRThRChUJBB3I1prrtmbw7PuGnh4Hf4WhJWXpEeB0/edit?gid=0#gid=0');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isSyncingTeachers, setIsSyncingTeachers] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
   // Active Menu Tab of student dashboard
@@ -40,6 +44,110 @@ export default function App() {
   const [allLogs, setAllLogs] = useState<InternshipLog[]>(() => getLogs());
   const [allStudents, setAllStudents] = useState<Student[]>(() => getStudents());
   const [allTeachers, setAllTeachers] = useState<Teacher[]>(() => getTeachers());
+
+  const refreshDbState = () => {
+    setAllLogs(getLogs());
+    setAllStudents(getStudents());
+    setAllTeachers(getTeachers());
+  };
+
+  const handleSyncTeachersFromSpecifiedSheet = async (showSuccessAlert = true) => {
+    setIsSyncingTeachers(true);
+    setSyncStatus(null);
+    setLoginErrorMessage(null);
+    try {
+      const targetUrl = 'https://docs.google.com/spreadsheets/d/125RRThRChUJBB3I1prrtmbw7PuGnh4Hf4WhJWXpEeB0/edit?gid=498172011#gid=498172011';
+      const text = await fetchGoogleSheet(targetUrl);
+      const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+      if (lines.length === 0) {
+        throw new Error('ไม่พบข้อมูลที่จะนำเข้าในชีตแผ่นที่ 2');
+      }
+
+      const currentTeachers = getTeachers();
+      const updatedTeachersList = [...currentTeachers];
+      let importCount = 0;
+      let duplicateCount = 0;
+
+      const parsedTeachers: Teacher[] = [];
+
+      for (let line of lines) {
+        let parts: string[] = [];
+        const matches = line.match(/("([^"]*)"|[^,]+)/g);
+        if (matches) {
+          parts = matches.map(m => m.replace(/^"|"$/g, '').trim());
+        } else {
+          parts = line.split(',').map(p => p.trim());
+        }
+
+        if (parts.length >= 2) {
+          const teacher_id = parts[0].trim();
+          const full_name = parts[1] ? parts[1].trim() : teacher_id;
+
+          // Skip headers
+          if (
+            teacher_id.toLowerCase().includes('teacher_id') || 
+            teacher_id.toLowerCase().includes('teacherid') || 
+            teacher_id.includes('รหัสอาจารย์') || 
+            teacher_id.includes('รหัส') || 
+            teacher_id.includes('ชื่อผู้ใช้') || 
+            teacher_id.toLowerCase().includes('username') ||
+            teacher_id.toUpperCase() === 'ID'
+          ) {
+            continue;
+          }
+
+          if (teacher_id && full_name) {
+            const department = parts[2] ? parts[2].trim() : "นักวิชาการคอมพิวเตอร์ชำนาญการ";
+            const password = parts[3] ? parts[3].trim() : "1234";
+            parsedTeachers.push({
+              teacher_id,
+              full_name,
+              department,
+              password
+            });
+          }
+        }
+      }
+
+      if (parsedTeachers.length === 0) {
+        throw new Error('ไม่พบข้อมูลรายชื่ออาจารย์นิเทศที่ถูกต้องในโครงสร้างชีตแผ่นที่ 2');
+      }
+
+      // Replace and update the teacher list, but preserve existing signatures
+      const existingSignatures: { [id: string]: string } = {};
+      currentTeachers.forEach(t => {
+        if (t.signature) {
+          existingSignatures[t.teacher_id] = t.signature;
+        }
+      });
+
+      const finalTeachersList = parsedTeachers.map(t => ({
+        ...t,
+        signature: existingSignatures[t.teacher_id] || t.signature || ''
+      }));
+
+      saveTeachers(finalTeachersList);
+      setAllTeachers(getTeachers());
+      refreshDbState();
+      
+      if (showSuccessAlert) {
+        setSyncStatus({
+          type: 'success',
+          message: `ดึงรายชื่ออาจารย์จากชีตหน้าที่ 2 สำเร็จ! (เพิ่มใหม่ ${importCount} ท่าน, อัปเดต ${duplicateCount} ท่าน)`
+        });
+      }
+    } catch (err: any) {
+      console.error(err);
+      if (showSuccessAlert) {
+        setSyncStatus({
+          type: 'error',
+          message: err.message || 'ไม่สามารถเชื่อมต่อเพื่อรวมรายชื่ออาจารย์จาก Google Sheet ได้'
+        });
+      }
+    } finally {
+      setIsSyncingTeachers(false);
+    }
+  };
 
   // Initialize Database on load
   useEffect(() => {
@@ -53,16 +161,13 @@ export default function App() {
     } else {
       setCurrentUserTeacherName('อาจารย์นิเทศ');
     }
+
+    // Auto-sync teachers from Sheet Page 2 on mount
+    handleSyncTeachersFromSpecifiedSheet(false);
   }, []);
 
   // Mobile menu visibility
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  const refreshDbState = () => {
-    setAllLogs(getLogs());
-    setAllStudents(getStudents());
-    setAllTeachers(getTeachers());
-  };
 
   // Sync function to pull dataset from Google Sheets
   const handleSyncGoogleSheets = async () => {
@@ -225,6 +330,52 @@ export default function App() {
     }
   };
 
+  const handleTeacherCredentialsLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginErrorMessage(null);
+
+    const tid = loginTeacherId.trim();
+    const tpass = loginTeacherPassword.trim();
+
+    if (!tid || !tpass) {
+      setLoginErrorMessage("กรุณากรอกข้อมูลชื่อผู้ใช้และรหัสผ่านให้ครบถ้วน");
+      return;
+    }
+
+    if (tpass.length !== 4 || isNaN(Number(tpass))) {
+      setLoginErrorMessage("รหัสผ่านต้องเป็นตัวเลข 4 หลัก");
+      return;
+    }
+
+    const teachersList = getTeachers();
+    
+    // Support either master static login 'TEACHER' with password '1234'
+    // or any registered teacher from synced sheet with their specific loaded password from Column B/D
+    const isMaster = tid.toUpperCase() === 'TEACHER' && tpass === '1234';
+    const foundTeacher = teachersList.find(t => 
+      t.full_name.trim().toUpperCase() === tid.toUpperCase() || 
+      t.teacher_id.trim().toUpperCase() === tid.toUpperCase()
+    );
+
+    if (isMaster) {
+      let defaultName = "อาจารย์นิเทศ";
+      if (teachersList.length > 0) {
+        defaultName = teachersList[0].full_name;
+      }
+      handleTeacherLogin(defaultName);
+    } else if (foundTeacher) {
+      // Use password from sheet Column D
+      const requiredPassword = foundTeacher.password || "1110";
+      if (tpass === requiredPassword) {
+        handleTeacherLogin(foundTeacher.full_name);
+      } else {
+        setLoginErrorMessage(`รหัสผ่านส่วนตัวสำหรับ "${foundTeacher.full_name}" ไม่ถูกต้อง (กรุณาใช้รหัสผ่าน 4 หลักที่ระบุในไฟล์ Google Sheets หน้าสอง คอลัมน์ D)`);
+      }
+    } else {
+      setLoginErrorMessage("ไม่พบชื่อผู้ใช้นี้ในระบบ (กรุณาป้อนชื่อผู้ใช้ คอลัมน์ B เช่น พี่ตาม, พี่่หมู หรือ เข้าด้วยรหัส TEACHER / 1234)");
+    }
+  };
+
   const handleTeacherLogin = (teacherName: string) => {
     setCurrentRole('teacher');
     setCurrentUserTeacherName(teacherName);
@@ -372,29 +523,179 @@ export default function App() {
                 </div>
               )}
 
-              {/* Student Login Form */}
-              <form onSubmit={handleStudentLogin} className="space-y-4">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">
-                    รหัสนักศึกษา (Student ID)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="ป้อนรหัส 11 หลัก เช่น 65011234001"
-                    value={loginStudentId}
-                    onChange={(e) => setLoginStudentId(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 focus:bg-white text-slate-800 font-bold placeholder-slate-400 text-sm rounded-2xl p-3.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 tracking-wider transition-all"
-                  />
-                </div>
-
+              {/* Tab Selector */}
+              <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-205/50">
                 <button
-                  type="submit"
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-4 px-6 rounded-2xl tracking-wide shadow-sm hover:shadow transition-all cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    setLoginTab('student');
+                    setLoginErrorMessage(null);
+                  }}
+                  className={`flex-1 py-3 px-4 text-center font-extrabold text-xs rounded-xl tracking-wide transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    loginTab === 'student'
+                      ? 'bg-white text-emerald-800 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
                 >
-                  เข้าสู่ระบบนักศึกษา (Student Sign In)
+                  <GraduationCap className="w-4 h-4" />
+                  <span>เข้าสู่ระบบนักศึกษา</span>
                 </button>
-              </form>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginTab('teacher');
+                    setLoginErrorMessage(null);
+                  }}
+                  className={`flex-1 py-3 px-4 text-center font-extrabold text-xs rounded-xl tracking-wide transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    loginTab === 'teacher'
+                      ? 'bg-white text-sky-800 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Lock className="w-4 h-4" />
+                  <span>เข้าสู่ระบบอาจารย์นิเทศ</span>
+                </button>
+              </div>
+
+              {/* Student Login Form */}
+              {loginTab === 'student' ? (
+                <form onSubmit={handleStudentLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">
+                      รหัสนักศึกษา (Student ID)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="ป้อนรหัส 11 หลัก เช่น 65011234001"
+                      value={loginStudentId}
+                      onChange={(e) => setLoginStudentId(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:bg-white text-slate-800 font-bold placeholder-slate-400 text-sm rounded-2xl p-3.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 tracking-wider transition-all"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-4 px-6 rounded-2xl tracking-wide shadow-sm hover:shadow transition-all cursor-pointer"
+                  >
+                    เข้าสู่ระบบนักศึกษา (Student Sign In)
+                  </button>
+                </form>
+              ) : (
+                /* Teacher/Supervisor Login Form with 4-digit PIN */
+                <div className="space-y-4">
+                  {/* Google Sheets Page 2 Integration for Teacher Login */}
+                  <div className="bg-sky-50/60 border border-sky-100 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-start gap-2.5">
+                      <FileSpreadsheet className="w-5 h-5 text-sky-650 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-[11px] font-extrabold text-sky-900 uppercase tracking-wider mb-0.5">
+                          ดึงบัญชีอาจารย์จาก Google Sheets (หน้าที่ 2)
+                        </h4>
+                        <p className="text-[10px] text-sky-750/90 font-medium leading-relaxed">
+                          เชื่อมต่อดึงข้อมูลและอัปเดตบัญชีอาจารย์นิเทศล่าสุดด้วยลิงก์แผ่นงานหน้าที่ 2 (gid=498172011) อัตโนมัติ เพื่อนำมาใช้เข้าสู่ระบบ
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isSyncingTeachers}
+                      onClick={() => handleSyncTeachersFromSpecifiedSheet(true)}
+                      className={`w-full py-2.5 px-4 rounded-xl text-[11px] font-bold tracking-wide transition-all duration-300 border flex items-center justify-center gap-2 ${
+                        isSyncingTeachers
+                          ? 'bg-sky-100 border-sky-200 text-sky-500 cursor-not-allowed'
+                          : 'bg-white hover:bg-sky-100/50 border-sky-200 text-sky-850 hover:text-sky-950 active:scale-[0.98] cursor-pointer shadow-2xs'
+                      }`}
+                    >
+                      {isSyncingTeachers ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-sky-650 border-t-transparent rounded-full animate-spin" />
+                          <span>กำลังดึงข้อมูลรายชื่อจาก Google Sheets...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                          <span>ดาวน์โหลดรายชื่ออาจารย์ล่าสุดจาก Google Sheets</span>
+                        </>
+                      )}
+                    </button>
+
+                    {syncStatus && (
+                      <div className={`text-[10px] p-2.5 rounded-xl flex items-start gap-2 border leading-normal font-semibold ${
+                        syncStatus.type === 'success'
+                          ? 'bg-emerald-50 border-emerald-100 text-emerald-850'
+                          : 'bg-rose-50 border-rose-100 text-rose-850'
+                      }`}>
+                        {syncStatus.type === 'success' ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-650 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-650 shrink-0 mt-0.5" />
+                        )}
+                        <span>{syncStatus.message}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleTeacherCredentialsLogin} className="space-y-4">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 flex justify-between">
+                        <span>ชื่อผู้ใช้ (Teacher Username)</span>
+                        <span className="text-[10px] text-sky-600 font-bold bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-100">
+                          เช่น พี่ตาม, พี่่หมู
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="ป้อนชื่อผู้ใช้ (เช่น พี่ตาม, พี่่หมู) หรือ ID (เช่น E11)"
+                        value={loginTeacherId}
+                        onChange={(e) => setLoginTeacherId(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 focus:bg-white text-slate-800 font-bold placeholder-slate-400 text-sm rounded-2xl p-3.5 focus:outline-none focus:ring-2 focus:ring-sky-500 tracking-wider transition-all"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-1.5">
+                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+                          รหัสผ่าน (Teacher Password)
+                        </label>
+                        <span className="text-[10px] text-sky-650 font-bold bg-emerald-55 bg-emerald-50 text-emerald-750 px-2 py-0.5 rounded-lg border border-emerald-100">
+                          เช่น 1110, 1120
+                        </span>
+                      </div>
+                      <input
+                        type="password"
+                        required
+                        maxLength={4}
+                        pattern="[0-9]*"
+                        inputMode="numeric"
+                        placeholder="ป้อนรหัสผ่านเช่น 1110 หรือ 1120"
+                        value={loginTeacherPassword}
+                        onChange={(e) => setLoginTeacherPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 focus:bg-white text-slate-800 font-bold placeholder-slate-400 text-sm rounded-2xl p-3.5 focus:outline-none focus:ring-2 focus:ring-sky-500 tracking-widest text-center transition-all"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs py-4 px-6 rounded-2xl tracking-wide shadow-sm hover:shadow transition-all cursor-pointer"
+                    >
+                      เข้าสู่ระบบอาจารย์นิเทศ (Advisor Sign In)
+                    </button>
+
+                    <div className="text-[10px] bg-slate-50 border border-slate-100 p-3 rounded-xl text-slate-500 leading-normal font-semibold">
+                      💡 <span className="text-slate-800 font-bold">ข้อมูลดึงตรงจากแผ่นที่ 2 ของสเปรดชีต:</span><br />
+                      - ชื่อผู้ใช้ <strong className="text-sky-700">คอลัมน์ B</strong> กับ รหัสผ่าน <strong className="text-emerald-700">คอลัมน์ D</strong><br />
+                      - เช่น <strong className="text-slate-700">พี่ตาม</strong> (รหัสผ่านคือ <strong className="text-emerald-700">1110</strong>)<br />
+                      - เช่น <strong className="text-slate-700">พี่่หมู</strong> (รหัสผ่านคือ <strong className="text-emerald-700">1120</strong>)<br />
+                      - เช่น <strong className="text-slate-700">พี่สกาย</strong> (รหัสผ่านคือ <strong className="text-emerald-700">1130</strong>)<br />
+                      - เช่น <strong className="text-slate-700">พี่ต้า</strong> (รหัสผ่านคือ <strong className="text-emerald-700">1140</strong>)<br />
+                      - เช่น <strong className="text-slate-700">ปะหวา</strong> (รหัสผ่านคือ <strong className="text-emerald-700">1150</strong>)
+                    </div>
+                  </form>
+                </div>
+              )}
 
               {/* Quick Login Simulation for Graders */}
               <div className="border-t border-slate-100 pt-6 space-y-4.5">

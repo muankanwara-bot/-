@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Student, InternshipLog } from '../types';
 import { addLog, calculateHours, getLogs } from '../db';
-import SignaturePad from './SignaturePad';
 import { 
   FileText, Calendar, Clock, Sparkles, BookOpen, 
   HelpCircle, CheckCircle, PlusCircle, History, Home 
@@ -49,7 +48,7 @@ export default function LogForm({ currentStudent, onSuccess, onGoHome }: LogForm
     setFormError(null);
 
     // 1. Basic Required Fields Check (ขั้นตอน 4)
-    if (!workDate || !startTime || !endTime || !workDetail.trim() || !signature) {
+    if (!workDate || !startTime || !endTime || !workDetail.trim()) {
       setFormError("กรุณากรอกข้อมูลให้ครบถ้วน");
       return;
     }
@@ -288,12 +287,6 @@ export default function LogForm({ currentStudent, onSuccess, onGoHome }: LogForm
             </div>
           </div>
         </div>
-
-        {/* 5. Supervisor signature drawing / file upload */}
-        <SignaturePad 
-          onSave={(sig) => setSignature(sig)} 
-          initialSignature={signature}
-        />
 
         {/* 6. Note (optional text field) */}
         <div>
